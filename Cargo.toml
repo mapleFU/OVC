@@ -1,0 +1,25 @@
+[package]
+name = "ovc"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+arrow-array = "56"
+pprof = { version = "0.14", optional = true, features = ["criterion", "flamegraph"] }
+
+[features]
+pprof = ["dep:pprof"]
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "ovc_compare"
+harness = false
+
+[profile.bench]
+debug = 1
+strip = "none"
