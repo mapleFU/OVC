@@ -37,6 +37,8 @@ pub fn first_diff_offset_from(a: &[u8], b: &[u8], start_offset: usize) -> usize 
     min_len
 }
 
+/// FIXME: this gives EOS when failed, maybe encode an extra
+/// value here.
 #[inline]
 pub fn byte_or_eos(s: &[u8], idx: usize) -> u8 {
     s.get(idx).copied().unwrap_or(EOS)
@@ -76,6 +78,18 @@ impl OvcAsciiCodec {
     #[inline]
     pub fn encode_asc(&self, offset: usize, value: u8) -> u64 {
         self.base - (offset as u64) * self.domain + (value as u64)
+    }
+
+    #[inline]
+    pub fn decode_offset_asc(&self, code: u64) -> usize {
+        if code == u64::MAX {
+            return 0;
+        }
+        let top = self.base + (self.domain - 1);
+        if code > top {
+            return 0;
+        }
+        ((top - code) / self.domain) as usize
     }
 
     #[inline]
@@ -135,6 +149,7 @@ pub mod arrow_merge {
         active_streams: usize,
         padded_streams: usize,
         positions: Vec<usize>,
+        current_keys: Vec<Option<&'a [u8]>>,
         tree: Vec<usize>,
         sentinel: usize,
     }
@@ -146,6 +161,14 @@ pub mod arrow_merge {
             let sentinel = padded_streams;
 
             let positions = vec![0usize; padded_streams];
+            let mut current_keys = vec![None; padded_streams];
+            for s in 0..active_streams {
+                let a = streams[s];
+                if !a.is_empty() {
+                    current_keys[s] = Some(a.value(0));
+                }
+            }
+
             let mut tree = vec![sentinel; padded_streams * 2];
             for i in 0..padded_streams {
                 tree[padded_streams + i] = i;
@@ -156,6 +179,7 @@ pub mod arrow_merge {
                 active_streams,
                 padded_streams,
                 positions,
+                current_keys,
                 tree,
                 sentinel,
             }
@@ -166,13 +190,7 @@ pub mod arrow_merge {
             if stream >= self.active_streams {
                 return None;
             }
-            let a = self.streams[stream];
-            let p = self.positions[stream];
-            if p >= a.len() {
-                None
-            } else {
-                Some(a.value(p))
-            }
+            self.current_keys[stream]
         }
 
         #[inline]
@@ -185,7 +203,6 @@ pub mod arrow_merge {
             }
         }
 
-        #[inline]
         fn winner_of(&self, a: usize, b: usize) -> usize {
             if a == self.sentinel {
                 return b;
@@ -203,7 +220,8 @@ pub mod arrow_merge {
         fn rebuild_node(&mut self, i: usize) {
             let left = self.tree[i * 2];
             let right = self.tree[i * 2 + 1];
-            self.tree[i] = self.winner_of(left, right);
+            let winner = self.winner_of(left, right);
+            self.tree[i] = winner;
         }
 
         pub fn init(&mut self) {
@@ -230,7 +248,11 @@ pub mod arrow_merge {
         pub fn advance_winner(&mut self) -> Option<usize> {
             let w = self.winner()?;
             self.positions[w] += 1;
-
+            if self.positions[w] < self.streams[w].len() {
+                self.current_keys[w] = Some(self.streams[w].value(self.positions[w]));
+            } else {
+                self.current_keys[w] = None;
+            }
             let mut i = (self.padded_streams + w) / 2;
             while i > 0 {
                 self.rebuild_node(i);
@@ -246,13 +268,14 @@ pub mod arrow_merge {
         active_streams: usize,
         padded_streams: usize,
         positions: Vec<usize>,
+        current_keys: Vec<Option<&'a [u8]>>,
         tree: Vec<usize>,
         sentinel: usize,
         codec: OvcAsciiCodec,
         codes: Vec<u64>,
         stream_codes: Vec<&'a [u64]>,
         node_losers: Vec<usize>,
-        node_offsets: Vec<usize>,
+        node_codes: Vec<u64>,
     }
 
     impl<'a> LoserTreeOvc<'a> {
@@ -265,6 +288,13 @@ pub mod arrow_merge {
             let sentinel = padded_streams;
 
             let positions = vec![0usize; padded_streams];
+            let mut current_keys = vec![None; padded_streams];
+            for s in 0..active_streams {
+                let a = streams[s];
+                if !a.is_empty() {
+                    current_keys[s] = Some(a.value(0));
+                }
+            }
             let mut tree = vec![sentinel; padded_streams * 2];
             for i in 0..padded_streams {
                 tree[padded_streams + i] = i;
@@ -294,7 +324,7 @@ pub mod arrow_merge {
 
             let mut codes = vec![u64::MAX; padded_streams];
             let node_losers = vec![sentinel; padded_streams * 2];
-            let node_offsets = vec![0usize; padded_streams * 2];
+            let node_codes = vec![u64::MAX; padded_streams * 2];
             for s in 0..active_streams {
                 let a = streams[s];
                 if !a.is_empty() {
@@ -308,13 +338,14 @@ pub mod arrow_merge {
                 active_streams,
                 padded_streams,
                 positions,
+                current_keys,
                 tree,
                 sentinel,
                 codec,
                 codes,
                 stream_codes: padded_codes,
                 node_losers,
-                node_offsets,
+                node_codes,
             }
         }
 
@@ -323,19 +354,13 @@ pub mod arrow_merge {
             if stream >= self.active_streams {
                 return None;
             }
-            let a = self.streams[stream];
-            let p = self.positions[stream];
-            if p >= a.len() {
-                None
-            } else {
-                Some(a.value(p))
-            }
+            self.current_keys[stream]
         }
 
         #[inline]
         fn compare(&self, a: usize, b: usize) -> Ordering {
-            let ca = self.codes.get(a).copied().unwrap_or(u64::MAX);
-            let cb = self.codes.get(b).copied().unwrap_or(u64::MAX);
+            let ca = unsafe { *self.codes.get_unchecked(a) };
+            let cb = unsafe { *self.codes.get_unchecked(b) };
             match ca.cmp(&cb) {
                 Ordering::Equal => {
                     if ca == u64::MAX {
@@ -354,21 +379,20 @@ pub mod arrow_merge {
         }
 
         #[inline]
-        fn recompute_loser_vs_winner_fast(&mut self, loser: usize, winner: usize, start_offset: usize) -> usize {
+        fn recompute_loser_vs_winner_fast(&mut self, loser: usize, winner: usize, start_offset: usize) {
             if loser >= self.active_streams || winner >= self.active_streams {
-                return 0;
+                return;
             }
             let Some(lk) = self.current(loser) else {
                 self.codes[loser] = u64::MAX;
-                return 0;
+                return;
             };
             let Some(wk) = self.current(winner) else {
                 self.codes[loser] = u64::MAX;
-                return 0;
+                return;
             };
-            let (code, offset) = self.codec.recompute_fast(lk, wk, start_offset);
+            let (code, _) = self.codec.recompute_fast(lk, wk, start_offset);
             self.codes[loser] = code;
-            offset
         }
 
         #[inline]
@@ -392,17 +416,25 @@ pub mod arrow_merge {
             let winner = self.winner_of(left, right);
             let loser = if winner == left { right } else { left };
             if winner != self.sentinel && loser != self.sentinel {
-                let start = if self.node_losers[i] == loser {
-                    self.node_offsets[i]
+                let loser_code = self.codes[loser];
+                let winner_code = self.codes[winner];
+                if loser_code != winner_code {
+                    self.codes[loser] = loser_code.max(winner_code);
+                    self.node_losers[i] = loser;
+                    self.node_codes[i] = u64::MAX;
                 } else {
-                    0
-                };
-                let offset = self.recompute_loser_vs_winner_fast(loser, winner, start);
-                self.node_losers[i] = loser;
-                self.node_offsets[i] = offset;
+                    let start = if self.node_losers[i] == loser {
+                        self.codec.decode_offset_asc(self.node_codes[i])
+                    } else {
+                        0
+                    };
+                    self.recompute_loser_vs_winner_fast(loser, winner, start);
+                    self.node_losers[i] = loser;
+                    self.node_codes[i] = self.codes[loser];
+                }
             } else {
                 self.node_losers[i] = self.sentinel;
-                self.node_offsets[i] = 0;
+                self.node_codes[i] = u64::MAX;
             }
             self.tree[i] = winner;
         }
@@ -441,8 +473,10 @@ pub mod arrow_merge {
                 let next_pos = self.positions[w];
                 let sc = self.stream_codes[w];
                 self.codes[w] = sc[next_pos];
+                self.current_keys[w] = Some(a.value(next_pos));
             } else {
                 self.codes[w] = u64::MAX;
+                self.current_keys[w] = None;
             }
 
             let mut i = (self.padded_streams + w) / 2;
@@ -475,7 +509,7 @@ pub mod arrow_merge {
             "stream_codes.len() must equal streams.len()"
         );
         let refs: Vec<_> = streams.iter().collect();
-        let code_slices: Vec<&[u64]> = stream_codes.iter().copied().collect();
+        let code_slices: Vec<&[u64]> = stream_codes.to_vec();
         let mut lt = LoserTreeOvc::new(refs, code_slices);
         lt.init();
 
@@ -531,11 +565,9 @@ mod tests {
     fn gen_key(state: &mut u64, len: usize, common_prefix_len: usize) -> Vec<u8> {
         let mut out = vec![0u8; len];
         let prefix = common_prefix_len.min(len);
-        for i in 0..prefix {
-            out[i] = 42;
-        }
-        for i in prefix..len {
-            out[i] = gen_ascii_byte(state);
+        out[..prefix].fill(42);
+        for b in &mut out[prefix..] {
+            *b = gen_ascii_byte(state);
         }
         out
     }
@@ -543,10 +575,10 @@ mod tests {
     #[test]
     fn loser_tree_merge_ovc_with_stream_codes_matches_bytes_merge() {
         let mut state = 0xFACE_FEEDu64;
-        let stream_count = 8usize;
-        let items_per_stream = 64usize;
-        let key_len = 16usize;
-        let common_prefix_len = 8usize;
+        let stream_count = 16usize;
+        let items_per_stream = 512usize;
+        let key_len = 64usize;
+        let common_prefix_len = 20usize;
 
         let mut streams = Vec::with_capacity(stream_count);
         let mut expected = Vec::with_capacity(stream_count * items_per_stream);

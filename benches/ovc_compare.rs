@@ -88,11 +88,9 @@ fn generate_recompute_pairs(
 fn generate_key(state: &mut u64, total_len: usize, common_prefix_len: usize) -> Vec<u8> {
     let mut out = vec![0u8; total_len];
     let prefix = common_prefix_len.min(total_len);
-    for i in 0..prefix {
-        out[i] = 42;
-    }
-    for i in prefix..total_len {
-        out[i] = gen_ascii_byte(state);
+    out[..prefix].fill(42);
+    for b in &mut out[prefix..] {
+        *b = gen_ascii_byte(state);
     }
     out
 }
