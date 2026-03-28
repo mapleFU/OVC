@@ -32,7 +32,11 @@ fn gen_ascii_byte(state: &mut u64) -> u8 {
     (x as u8) & 0x7F
 }
 
-fn generate_pair(state: &mut u64, total_len: usize, common_prefix_len: usize) -> (Vec<u8>, Vec<u8>) {
+fn generate_pair(
+    state: &mut u64,
+    total_len: usize,
+    common_prefix_len: usize,
+) -> (Vec<u8>, Vec<u8>) {
     let mut a = vec![0u8; total_len];
     let mut b = vec![0u8; total_len];
 
@@ -64,7 +68,11 @@ fn generate_pair(state: &mut u64, total_len: usize, common_prefix_len: usize) ->
     (a, b)
 }
 
-fn generate_pairs(count: usize, total_len: usize, common_prefix_len: usize) -> Vec<(Vec<u8>, Vec<u8>)> {
+fn generate_pairs(
+    count: usize,
+    total_len: usize,
+    common_prefix_len: usize,
+) -> Vec<(Vec<u8>, Vec<u8>)> {
     let mut state = 0x1234_5678_9ABC_DEF0u64;
     (0..count)
         .map(|_| generate_pair(&mut state, total_len, common_prefix_len))
@@ -176,7 +184,8 @@ fn bench_pairwise_compare(c: &mut Criterion) {
                 b.iter(|| {
                     let mut acc = 0u64;
                     for (a, b) in pairs {
-                        let ord = ovc::ovc_cmp_ascii(black_box(a.as_slice()), black_box(b.as_slice()));
+                        let ord =
+                            ovc::ovc_cmp_ascii(black_box(a.as_slice()), black_box(b.as_slice()));
                         acc = acc.wrapping_add(match ord {
                             Ordering::Less => 1,
                             Ordering::Equal => 2,
@@ -196,8 +205,11 @@ fn bench_pairwise_compare(c: &mut Criterion) {
                     let mut acc = 0u64;
                     let codec = ovc::OvcAsciiCodec::new(total_len);
                     for (a, b) in pairs {
-                        let (ac, bc) =
-                            ovc::ovc_codes_for_pair_ascii(codec, black_box(a.as_slice()), black_box(b.as_slice()));
+                        let (ac, bc) = ovc::ovc_codes_for_pair_ascii(
+                            codec,
+                            black_box(a.as_slice()),
+                            black_box(b.as_slice()),
+                        );
                         acc = acc.wrapping_add(ac ^ bc);
                     }
                     black_box(acc);
@@ -246,7 +258,8 @@ fn bench_ovc_recompute(c: &mut Criterion) {
                 b.iter(|| {
                     let mut acc = 0u64;
                     for (loser, winner) in pairs {
-                        let code = codec.recompute(black_box(loser.as_slice()), black_box(winner.as_slice()));
+                        let code = codec
+                            .recompute(black_box(loser.as_slice()), black_box(winner.as_slice()));
                         acc = acc.wrapping_add(code);
                     }
                     black_box(acc);
@@ -282,15 +295,18 @@ fn bench_kway_merge(c: &mut Criterion) {
             },
         );
 
-        group.bench_function(BenchmarkId::new("loser_tree_ovc_precomputed", prefix_len), |b| {
-            b.iter(|| {
-                let x = ovc::arrow_merge::merge_loser_tree_ovc_with_codes(
-                    black_box(&streams),
-                    black_box(code_slices.as_slice()),
-                );
-                black_box(x);
-            })
-        });
+        group.bench_function(
+            BenchmarkId::new("loser_tree_ovc_precomputed", prefix_len),
+            |b| {
+                b.iter(|| {
+                    let x = ovc::arrow_merge::merge_loser_tree_ovc_with_codes(
+                        black_box(&streams),
+                        black_box(code_slices.as_slice()),
+                    );
+                    black_box(x);
+                })
+            },
+        );
     }
 
     group.finish();
@@ -319,15 +335,18 @@ fn bench_kway_merge_prefix20_tail30(c: &mut Criterion) {
         },
     );
 
-    group.bench_function(BenchmarkId::new("loser_tree_ovc_precomputed", "p20_t30"), |b| {
-        b.iter(|| {
-            let x = ovc::arrow_merge::merge_loser_tree_ovc_with_codes(
-                black_box(&streams),
-                black_box(code_slices.as_slice()),
-            );
-            black_box(x);
-        })
-    });
+    group.bench_function(
+        BenchmarkId::new("loser_tree_ovc_precomputed", "p20_t30"),
+        |b| {
+            b.iter(|| {
+                let x = ovc::arrow_merge::merge_loser_tree_ovc_with_codes(
+                    black_box(&streams),
+                    black_box(code_slices.as_slice()),
+                );
+                black_box(x);
+            })
+        },
+    );
 
     group.finish();
 }
@@ -364,7 +383,8 @@ fn bench_kway_merge_prefix20_tail30_split(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let refs: Vec<_> = streams.iter().collect();
-                    let code_slices: Vec<&[u64]> = stream_codes.iter().map(|x| x.as_slice()).collect();
+                    let code_slices: Vec<&[u64]> =
+                        stream_codes.iter().map(|x| x.as_slice()).collect();
                     let mut lt = ovc::arrow_merge::LoserTreeOvc::new(refs, code_slices);
                     lt.init();
                     lt

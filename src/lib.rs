@@ -265,25 +265,32 @@ pub mod arrow_merge {
     }
 
     pub struct LoserTreeOvc<'a> {
+        // len = active_streams; 每个输入 stream（BinaryViewArray），stream 内部已按字典序升序
         streams: Vec<&'a BinaryViewArray>,
         active_streams: usize,
         padded_streams: usize,
+        // len = padded_streams; positions[s] 是 stream s 当前 head 的行号（0..streams[s].len()），越界表示 exhausted
         positions: Vec<usize>,
+        // len = padded_streams; current_keys[s] 是 streams[s].value(positions[s]) 的缓存；exhausted 或 padding 为 None
         current_keys: Vec<Option<&'a [u8]>>,
+        // len = 2*padded_streams; 完全二叉树堆式布局：
+        // - 叶子在 [padded_streams .. 2*padded_streams)，值是 stream id 或 sentinel
+        // - 内部节点 i 存该子树 winner 的 stream id（或 sentinel）
         tree: Vec<usize>,
         sentinel: usize,
         codec: OvcAsciiCodec,
+        // len = padded_streams; codes[s] 是 stream s 当前 head 的 OVC code（来自 stream_codes[pos]，并在树上按 max 规则抬高）
         codes: Vec<u64>,
+        // len = padded_streams; stream_codes[s] 是预计算的 per-row OVC code 列表（相邻 key recompute）；padding stream 为 []
         stream_codes: Vec<&'a [u64]>,
+        // len = 2*padded_streams; node_losers[i] 记录节点 i 上一次落败的 stream id（用于判断 “同一个 loser 又回到同一个 node”）
         node_losers: Vec<usize>,
+        // len = 2*padded_streams; node_codes[i] 仅在该 node 做过字节级 recompute 时记录当时的 loser-code（用于 decode offset 作为下次 start_offset）
         node_codes: Vec<u64>,
     }
 
     impl<'a> LoserTreeOvc<'a> {
-        pub fn new(
-            streams: Vec<&'a BinaryViewArray>,
-            stream_codes: Vec<&'a [u64]>,
-        ) -> Self {
+        pub fn new(streams: Vec<&'a BinaryViewArray>, stream_codes: Vec<&'a [u64]>) -> Self {
             let active_streams = streams.len();
             let padded_streams = next_power_of_two_at_least(active_streams);
             let sentinel = padded_streams;
@@ -381,7 +388,12 @@ pub mod arrow_merge {
         }
 
         #[inline]
-        fn recompute_loser_vs_winner_fast(&mut self, loser: usize, winner: usize, start_offset: usize) {
+        fn recompute_loser_vs_winner_fast(
+            &mut self,
+            loser: usize,
+            winner: usize,
+            start_offset: usize,
+        ) {
             if loser >= self.active_streams || winner >= self.active_streams {
                 return;
             }
@@ -504,7 +516,10 @@ pub mod arrow_merge {
         acc
     }
 
-    pub fn merge_loser_tree_ovc_with_codes(streams: &[BinaryViewArray], stream_codes: &[&[u64]]) -> u64 {
+    pub fn merge_loser_tree_ovc_with_codes(
+        streams: &[BinaryViewArray],
+        stream_codes: &[&[u64]],
+    ) -> u64 {
         assert_eq!(
             streams.len(),
             stream_codes.len(),
@@ -632,7 +647,8 @@ mod tests {
             .iter()
             .fold(0u64, |acc, x| acc.wrapping_add(x.len() as u64));
         let checksum_bytes = crate::arrow_merge::merge_loser_tree_bytes(&streams);
-        let checksum_ovc = crate::arrow_merge::merge_loser_tree_ovc_with_codes(&streams, &code_slices);
+        let checksum_ovc =
+            crate::arrow_merge::merge_loser_tree_ovc_with_codes(&streams, &code_slices);
         assert_eq!(checksum_bytes, checksum_expected);
         assert_eq!(checksum_ovc, checksum_expected);
     }
