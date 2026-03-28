@@ -135,9 +135,10 @@ pub mod arrow_merge {
     fn max_key_len(streams: &[&BinaryViewArray]) -> usize {
         let mut max_len = 0usize;
         for a in streams {
+            let views = a.views();
             for i in 0..a.len() {
-                let v = a.value(i);
-                max_len = max_len.max(v.len());
+                let v = views[i] as u32;
+                max_len = max_len.max(v as usize);
             }
         }
         max_len
@@ -295,6 +296,7 @@ pub mod arrow_merge {
                     current_keys[s] = Some(a.value(0));
                 }
             }
+            // Mark all as sentinel except the leaves
             let mut tree = vec![sentinel; padded_streams * 2];
             for i in 0..padded_streams {
                 tree[padded_streams + i] = i;
