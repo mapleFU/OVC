@@ -372,7 +372,7 @@ pub mod arrow_merge {
             let cb = unsafe { *self.codes.get_unchecked(b) };
             match ca.cmp(&cb) {
                 Ordering::Equal => {
-                    if ca == u64::MAX {
+                    if ca == u64::MAX || ca == 0 {
                         Ordering::Equal
                     } else {
                         match (self.current(a), self.current(b)) {
@@ -438,7 +438,7 @@ pub mod arrow_merge {
                     self.node_codes[i] = u64::MAX;
                 } else {
                     let start = if self.node_losers[i] == loser {
-                        self.codec.decode_offset_asc(self.node_codes[i])
+                        self.codec.decode_offset_asc(self.node_codes[i]) + 1
                     } else {
                         0
                     };

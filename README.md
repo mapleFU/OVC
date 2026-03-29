@@ -10,3 +10,5 @@ A project for offset-value coding demo
 * EDBT'25: [Modifying an existing sort order with offset-value codes](https://openproceedings.org/2025/conf/edbt/paper-79.pdf)
 * Adaptive sorting for large keys, strings, and database rows
 * NoDMC'25: [Poster: Offset-Value Coding using SIMD Intrinsics](https://hpi.de/oldsite/fileadmin/user_upload/fachgebiete/rabl/publications/2025/offset_value_coding_nodmc2025.pdf)
+* Adaptive sorting for large keys, strings, and database rows
+* Priority queues for database query processing
